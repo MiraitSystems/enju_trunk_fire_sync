@@ -9,9 +9,9 @@ module EnjuSyncServices
 
   module EnjuSyncUtil
     def tag_logger(msg)
-      logmsg = "#{$enju_log_head} #{$enju_log_tag} ${Time.now} #{msg}"
-      Rails.logger.info tag_logger
-      puts tag_logger
+      logmsg = "#{$enju_log_head} #{$enju_log_tag} #{Time.now} #{msg}"
+      Rails.logger.info logmsg
+      puts logmsg
     end
 
     def tag_notifier(msg, c = caller)
