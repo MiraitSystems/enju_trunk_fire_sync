@@ -8,13 +8,19 @@ $enju_log_head = ""
 $enju_log_tag = ""
 
 def tag_logger(msg)
-  logmsg = "#{$enju_log_head} #{$enju_log_tag} #{Time.now} #{msg}"
+  logmsg = "#{$enju_log_head} #{$enju_log_tag} #{Time.now.strftime("%Y-%m-%d %H:%M:%S")} #{msg}"
   Rails.logger.info logmsg
   puts logmsg
 end
 
 namespace :enju_trunk do
   namespace :fire_sync do
+    desc 'print status'
+    task :status => :environment do
+      require File.join(Gem::Specification.find_by_name("enju_trunk_fire_sync").gem_dir, 'app/services/enju_sync_service.rb')
+      EnjuSyncServices::Sync.show_status
+    end
+
     desc 'sync first'
     task :first => :environment do
       require File.join(Gem::Specification.find_by_name("enju_trunk_fire_sync").gem_dir, 'app/services/enju_sync_service.rb')
@@ -23,7 +29,7 @@ namespace :enju_trunk do
       $enju_log_head = "sync::first"
       $enju_log_tag = Digest::SHA1.hexdigest(Time.now.strftime('%s'))[-5, 5]
 
-      tag_logger "start #{Time.now}"
+      tag_logger "start"
 
       if ENV['EXPORT_FROM']
         last_event_id = Integer(ENV['EXPORT_FROM'])
@@ -44,9 +50,7 @@ namespace :enju_trunk do
 
       tag_logger "call task [enju::sync::export] start"
 
-      ENV['EXPORT_FROM'] = last_event_id.to_s
-      ENV['DUMP_FILE'] = dumpfile
-      Rake::Task["enju:sync:export"].invoke
+      EnjuSyncServices::Sync.export(EXPORT_FROM: last_event_id.to_s, DUMP_FILE: dumpfile)
 
       tag_logger "call task [enju::sync::export] end"
 
@@ -57,7 +61,7 @@ namespace :enju_trunk do
 
     desc 'Scheduled process'
     task :scheduled_export => :environment do
-      require File.join(Gem::Specification.find_by_name("enju_trunk").gem_dir, 'app/servies/enjusync.rb')
+      require File.join(Gem::Specification.find_by_name("enju_trunk_fire_sync").gem_dir, 'app/services/enju_sync_service.rb')
       Rails.logger = Logger.new(Rails.root.join("#{LOGFILE}-#{Rails.env}.log"))
 
       $enju_log_head = "sync::scheduled_export"
@@ -94,13 +98,13 @@ namespace :enju_trunk do
 
     desc 'Scheduled import process on opac(slave)'
     task :scheduled_import => :environment do
-      require File.join(Gem::Specification.find_by_name("enju_trunk").gem_dir, 'app/servies/enjusync.rb')
+      require File.join(Gem::Specification.find_by_name("enju_trunk_fire_sync").gem_dir, 'app/services/enju_sync_service.rb')
       Rails.logger = Logger.new(Rails.root.join("#{LOGFILE}-#{Rails.env}.log"))
 
       $enju_log_head = "sync::scheduled_import"
       $enju_log_tag = Digest::SHA1.hexdigest(Time.now.strftime('%s'))[-5, 5]
 
-      tag_logger "start #{Time.now}"
+      tag_logger "start"
     
       EnjuSyncServices::Sync.marshal_file_recv
 

@@ -9,7 +9,7 @@ module EnjuSyncServices
 
   module EnjuSyncUtil
     def tag_logger(msg)
-      logmsg = "#{$enju_log_head} #{$enju_log_tag} #{Time.now} #{msg}"
+      logmsg = "#{$enju_log_head} #{$enju_log_tag} #{Time.now.strftime("%Y-%m-%d %H:%M:%S")} #{msg}"
       Rails.logger.info logmsg
       puts logmsg
     end
@@ -47,7 +47,7 @@ module EnjuSyncServices
       send_stat = $3
       retry_cnt = $4
 
-      puts "control_file_nam=#{control_file_name} target_dir=#{target_dir}"
+      #tag_logger "control_file_nam=#{control_file_name} target_dir=#{target_dir}"
       rename_file_rename = File.join(target_dir, "#{exec_date}-#{status_mark}-#{retry_cnt}.ctl")
 
       tag_logger "rename to #{rename_file_rename}"
@@ -70,16 +70,104 @@ module EnjuSyncServices
 
     self.extend EnjuSyncUtil
 
+    def self.export(params)
+      if params[:STATUS_FILE]
+        Dir.glob(Rails.root.join('app/models/**/*.rb')).each { |path| require path }
+        status = Marshal.load(File.read(ENV[:STATUS_FILE]))
+        last_event_id = status[:last_event_id]
+        unless last_event_id
+          fail 'no id in the status file, please specify STATUS_FILE=path/to/previous_file or EXPORT_FROM=N'
+        end
+      elsif params[:EXPORT_FROM]
+        last_event_id = Integer(params[:EXPORT_FROM])
+      else
+        fail 'please specify STATUS_FILE=path/to/file or EXPORT_FROM=N'
+      end
+
+      Rails.application.eager_load!
+      Rails::Engine.subclasses.each{|engine| engine.instance.eager_load!}
+
+      unless params[:DUMP_FILE]
+        fail 'please specify DUMP_FILE=path/to/file'
+      end
+
+      dump = Version.export_for_incremental_synchronization(last_event_id)
+
+      if dump[:versions].empty?
+        $stderr.puts "no changes found"
+
+      else
+        open(params[:DUMP_FILE], 'w') do |io|
+          unless io.flock(File::LOCK_EX|File::LOCK_NB)
+            fail "another process is writing to #{params[:DUMP_FILE]}"
+          end
+          Marshal.dump(dump, io)
+        end
+      end
+    end
+
+    def self.import(params)
+      unless params[:DUMP_FILE]
+        fail 'please specify DUMP_FILE=path/to/file'
+      end
+
+      unless params[:STATUS_FILE]
+        fail 'please specify STATUS_FILE=path/to/file'
+      end
+
+      status = nil
+
+      open(params[:DUMP_FILE], 'r') do |df|
+        unless df.flock(File::LOCK_EX|File::LOCK_NB)
+          fail "another process is writing to #{params[:DUMP_FILE]}"
+        end
+
+        dump = Marshal.load(File.read(df))
+
+        if dump[:versions].empty?
+          $stderr.puts "no changes found"
+
+        else
+          open(params[:STATUS_FILE], 'w:binary') do |io|
+            unless io.flock(File::LOCK_EX|File::LOCK_NB)
+              fail "another process is writing to #{params[:STATUS_FILE]}"
+            end
+            status = Version.import_for_incremental_synchronization!(dump)
+            Marshal.dump(status, io)
+          end
+        end
+      end
+
+      unless status[:success]
+        failed_event = status[:failed_event]
+        fail "import failed on \"#{failed_event[:event_type]} #{failed_event[:item_type]}\##{failed_event[:item_id]}\" (Version\##{status[:failed_event_id]}): #{status[:exception][:message]} (#{status[:exception][:class].name})"
+        endv
+      end
+    end
+
+    def self.show_status
+      ftp_site = SystemConfiguration.get("sync.ftp.site")
+      ftp_user = SystemConfiguration.get("sync.ftp.user")
+      ftp_password = SystemConfiguration.get("sync.ftp.password")
+      puts "sync.ftp.site:#{ftp_site} "
+      puts "sync.ftp.user:#{ftp_user} "
+      puts "sync.ftp.password:#{ftp_password} "
+      puts "sync.ftp.directory:#{ftp_directory} "
+      puts "sync.master.base_directory:#{master_server_dir} "
+      puts "sync.slave.base_directory:#{slave_server_dir} "
+      puts "last.id:#{Version.last.id}"
+    end
+
     def self.ftp_directory
-      SystemConfiguration.get("sync.ftp.directory") || PUT_DIR
+      SystemConfiguration.get("sync.ftp.directory") 
     end
 
     def self.master_server_dir
-      SystemConfiguration.get("sync.master.base_directory") || MASTER_SERVER_DIR
+      SystemConfiguration.get("sync.master.base_directory") # || MASTER_SERVER_DIR
     end
 
     def self.slave_server_dir
-      SystemConfiguration.get("sync.slave.base_directory") || MASTER_SERVER_DIR
+      SystemConfiguration.get("sync.slave.base_directory") # || MASTER_SERVER_DIR
     end
 
     def self.get_status_file
@@ -271,10 +359,7 @@ module EnjuSyncServices
         end
 
         # rake enju:sync:import DUMP_FILE=$RecvDir/$rcv_bucket/enjudump.marshal STATUS_FILE=$RecvDir/$rcv_bucket/status.marshal
-        ENV['DUMP_FILE'] = marshal_file_name
-        ENV['STATUS_FILE'] = status_file_name
-
-        Rake::Task["enju:sync:import"].invoke
+        import(DUMP_FILE: marshal_file_name, STATUS_FILE: status_file_name)
 
         change_control_file_to_import(ctl_file_name)
       end
