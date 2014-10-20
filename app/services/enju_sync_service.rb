@@ -25,7 +25,7 @@ module EnjuSyncServices
       ExceptionNotifier::Rake.maybe_deliver_notification ex
     end
 
-    def change_control_file_to_import(ctl_file_name)
+    def change_control_file_to_imported(ctl_file_name)
       control_file_status_change(ctl_file_name, "IMP")
     end
 
@@ -73,7 +73,7 @@ module EnjuSyncServices
     def self.export(params)
       if params[:STATUS_FILE]
         Dir.glob(Rails.root.join('app/models/**/*.rb')).each { |path| require path }
-        status = Marshal.load(File.read(ENV[:STATUS_FILE]))
+        status = Marshal.load(File.read(params[:STATUS_FILE]))
         last_event_id = status[:last_event_id]
         unless last_event_id
           fail 'no id in the status file, please specify STATUS_FILE=path/to/previous_file or EXPORT_FROM=N'
@@ -149,13 +149,17 @@ module EnjuSyncServices
       ftp_site = SystemConfiguration.get("sync.ftp.site")
       ftp_user = SystemConfiguration.get("sync.ftp.user")
       ftp_password = SystemConfiguration.get("sync.ftp.password")
-      puts "sync.ftp.site:#{ftp_site} "
-      puts "sync.ftp.user:#{ftp_user} "
-      puts "sync.ftp.password:#{ftp_password} "
-      puts "sync.ftp.directory:#{ftp_directory} "
-      puts "sync.master.base_directory:#{master_server_dir} "
-      puts "sync.slave.base_directory:#{slave_server_dir} "
-      puts "last.id:#{Version.last.id}"
+      puts "Configuration:"
+      puts " sync.ftp.site: #{ftp_site} "
+      puts " sync.ftp.user: #{ftp_user} "
+      puts " sync.ftp.password: #{ftp_password} "
+      puts " sync.ftp.directory: #{ftp_directory} "
+      puts " sync.master.base_directory: #{master_server_dir} "
+      puts " sync.slave.base_directory: #{slave_server_dir} "
+      puts "Exception:"
+      puts " ExceptionNotifier: #{defined?(ExceptionNotifier) ? 'installed' : 'not installed (please install exception_notification-rake.)'}"
+      puts "Version:"
+      puts " Version.last.id: #{Version.last.id}"
     end
 
     def self.ftp_directory
@@ -171,15 +175,12 @@ module EnjuSyncServices
     end
 
     def self.get_status_file
-      ftp_site = SystemConfiguration.get("sync.ftp.site")
-      ftp_user = SystemConfiguration.get("sync.ftp.user")
-      ftp_password = SystemConfiguration.get("sync.ftp.password")
-      ftp_trans_mode = SystemConfiguration.get("sync.ftp.trans_mode_passive") || true
+      ftp_site, ftp_user, ftp_password, ftp_trans_mode = server_connection
 
       if ftp_site.blank?
         tag_notifier "FATAL: configuration (sync.ftp.site) is empty."
         tag_logger "FATAL: see config/config.yml"
-       return
+        return
       end
 
       if ftp_user.blank? || ftp_password.blank?
@@ -191,17 +192,24 @@ module EnjuSyncServices
       Net::FTP.open(ftp_site, ftp_user, ftp_password) do |ftp|
         ftp.passive = true
 
-        # scan
-        files = ftp.scan("/var/enjusync/*")
+        ftp.chdir(ftp_directory)
+        file_list =  ftp.nlst("-R *")
+        file_list = file_list.grep(/^\.\/\d*\/\d+.*-IMP-\d+\.ctl/)
+        last_control_file_name = file_list.sort.last
 
-        push_target_files.each do |file_name|
-          site_file_name = File.join(bucket_dir, File.basename(file_name))
-          tag_logger "push file: slave_server_filename: #{site_file_name}"
-          ftp.putbinaryfile(file_name, site_file_name)
+        unless last_control_file_name =~ /^\.\/(\d*)\/(\d+.*)-IMP-\d+\.ctl/
+          tag_logger "no status file"
+          return
         end
+
+        status_file_name = "status.marshal"
+        remote_file_name = "./#{$1}/#{status_file_name}"
+        local_file_name = File.join(master_server_dir, "work", status_file_name)
+
+        tag_logger "pull: remote_file_name=#{remote_file_name} local_file_name=#{local_file_name}"
+
+        ftp.getbinaryfile(remote_file_name, local_file_name)
       end
-
-
     end
 
     def self.load_control_file(ctl_file_name)
@@ -298,7 +306,7 @@ module EnjuSyncServices
       basedir = EnjuSyncServices::Sync.slave_server_dir
       glob_string = "#{basedir}/[0-9]*/[0-9]*-RDY-*.ctl"
 
-      tag_logger "recv glob_string=#{glob_string}"
+      tag_logger "setup: recv glob_string=#{glob_string}"
 
       # 受信可能ファイルを取得( RDY|ERR )
       rdy_ctl_files = Dir.glob(glob_string).sort 
@@ -317,7 +325,7 @@ module EnjuSyncServices
         send_stat = $2
         retry_cnt = $3
 
-        tag_logger "exec_date=#{exec_date} imp_stat=#{send_stat} retry_cnt=#{retry_cnt}"
+        tag_logger "setup: exec_date=#{exec_date} imp_stat=#{send_stat} retry_cnt=#{retry_cnt}"
 
         target_dir = File.dirname(ctl_file_name)
         unless /.*\/(\d*)$/ =~ target_dir
@@ -332,7 +340,7 @@ module EnjuSyncServices
         marshal_file_name = File.join(target_dir, DUMPFILE_NAME)
         status_file_name = File.join(target_dir, STATUSFILE_NAME)
 
-        tag_logger "compress_marshal_file_name=#{compress_marshal_file_name} marshal_file_name=#{marshal_file_name} status_file_name=#{status_file_name}"
+        tag_logger "setup: compress_marshal_file_name=#{compress_marshal_file_name} marshal_file_name=#{marshal_file_name} status_file_name=#{status_file_name}"
 
         # check
         gzfilesize, md5checksum = load_control_file(ctl_file_name)
@@ -349,6 +357,7 @@ module EnjuSyncServices
         end
 
         # uncompress
+        tag_logger "setup: uncompress from #{compress_marshal_file_name}"
         Zlib::GzipReader.open(compress_marshal_file_name) do |gz|
           orig_mtime = gz.mtime || Time.now # gz に時刻があればその時刻をタイムスタンプとして使用する
           File.open(marshal_file_name, "wb") do |f|
@@ -359,9 +368,11 @@ module EnjuSyncServices
         end
 
         # rake enju:sync:import DUMP_FILE=$RecvDir/$rcv_bucket/enjudump.marshal STATUS_FILE=$RecvDir/$rcv_bucket/status.marshal
+        tag_logger "import: start"
         import(DUMP_FILE: marshal_file_name, STATUS_FILE: status_file_name)
 
-        change_control_file_to_import(ctl_file_name)
+        tag_logger "import: success. change status"
+        change_control_file_to_imported(ctl_file_name)
       end
  
     end
@@ -369,10 +380,8 @@ module EnjuSyncServices
     def self.marshal_file_push(bucket_id)
       basedir = EnjuSyncServices::Sync.master_server_dir
       glob_string = "#{basedir}/[0-9]*/*-{RDY,ERR}-*.ctl"
-      ftp_site = SystemConfiguration.get("sync.ftp.site")
-      ftp_user = SystemConfiguration.get("sync.ftp.user")
-      ftp_password = SystemConfiguration.get("sync.ftp.password")
-      ftp_trans_mode = SystemConfiguration.get("sync.ftp.trans_mode_passive") || true
+
+      ftp_site, ftp_user, ftp_password, ftp_trans_mode = server_connection
 
       #tag_logger "glob_string=#{glob_string}"
 
@@ -431,6 +440,14 @@ module EnjuSyncServices
 
         change_control_file_to_success(ctl_file_name)
       end
+    end
+
+    def self.server_connection
+      ftp_site = SystemConfiguration.get("sync.ftp.site")
+      ftp_user = SystemConfiguration.get("sync.ftp.user")
+      ftp_password = SystemConfiguration.get("sync.ftp.password")
+      ftp_trans_mode = SystemConfiguration.get("sync.ftp.trans_mode_passive") || true
+      return ftp_site, ftp_user, ftp_password, ftp_trans_mode
     end
  end
 end

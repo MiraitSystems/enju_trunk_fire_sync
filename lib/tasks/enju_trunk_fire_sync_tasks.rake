@@ -26,7 +26,7 @@ namespace :enju_trunk do
       require File.join(Gem::Specification.find_by_name("enju_trunk_fire_sync").gem_dir, 'app/services/enju_sync_service.rb')
       Rails.logger = Logger.new(Rails.root.join("#{LOGFILE}-#{Rails.env}.log"))
 
-      $enju_log_head = "sync::first"
+      $enju_log_head = ":first"
       $enju_log_tag = Digest::SHA1.hexdigest(Time.now.strftime('%s'))[-5, 5]
 
       tag_logger "start"
@@ -42,18 +42,15 @@ namespace :enju_trunk do
       dumpfiledir = "#{basedir}/#{last_event_id}"
       dumpfile = "#{dumpfiledir}/#{EnjuSyncServices::Sync::DUMPFILE_NAME}"
 
-      tag_logger "last_id=#{last_event_id} dumpfiledir=#{dumpfiledir} dumpfile=#{dumpfile} "
+      tag_logger "setup: last_id=#{last_event_id} dumpfiledir=#{dumpfiledir} dumpfile=#{dumpfile} "
 
-      tag_logger "mkdir_p begin"
+      tag_logger "setup: try mkdir_p"
       FileUtils.mkdir_p(dumpfiledir)
-      tag_logger "mkdir_p end"
 
-      tag_logger "call task [enju::sync::export] start"
-
+      tag_logger "export: start"
       EnjuSyncServices::Sync.export(EXPORT_FROM: last_event_id.to_s, DUMP_FILE: dumpfile)
 
-      tag_logger "call task [enju::sync::export] end"
-
+      tag_logger "push: start"
       EnjuSyncServices::Sync.marshal_file_push(last_event_id)
 
       tag_logger "end (NormalEnd)"
@@ -64,36 +61,30 @@ namespace :enju_trunk do
       require File.join(Gem::Specification.find_by_name("enju_trunk_fire_sync").gem_dir, 'app/services/enju_sync_service.rb')
       Rails.logger = Logger.new(Rails.root.join("#{LOGFILE}-#{Rails.env}.log"))
 
-      $enju_log_head = "sync::scheduled_export"
+      $enju_log_head = ":scheduled_export"
       $enju_log_tag = Digest::SHA1.hexdigest(Time.now.strftime('%s'))[-5, 5]
 
-      tag_logger "start #{Time.now}"
-      tag_logger "init_bucket=#{INIT_BUCKET}"
-      tag_logger "send_bucket=#{SEND_BUCKET}"
+      tag_logger "start"
 
-      last_id = Version.last.id
-      dumpfiledir = "#{DUMPFILE_PREFIX}/#{last_id}"
-      dumpfile = "#{dumpfiledir}/#{DUMPFILE_NAME}"
+      last_event_id = Version.last.id
+      basedir = EnjuSyncServices::Sync.master_server_dir
+      dumpfiledir = "#{basedir}/#{last_event_id}"
+      dumpfile = "#{dumpfiledir}/#{EnjuSyncServices::Sync::DUMPFILE_NAME}"
+      status_file_name = File.join(basedir, "work", "status.marshal")
 
-      # a.業務側からWebOPAC側に接続し、5)のstatusfileを取得し work/marshal.status に保存。
-      #Dir::chdir(SCRIPT_ROOT)  
-      #tag_logger "call task [get_status_file] start"
-      # sh "#{PERLBIN} #{GET_STATUS_FILE}"
-      EnjuSyncServices::Sync.status_file_get
-      #tag_logger "call task [get_status_file] end"
+      tag_logger "setup: last_id=#{last_event_id} dumpfiledir=#{dumpfiledir} dumpfile=#{dumpfile} "
 
-      #
-      tag_logger "mkdir_p begin"
+      tag_logger "pull: start"
+      EnjuSyncServices::Sync.get_status_file
+
+      tag_logger "setup: try mkdir_p"
       FileUtils.mkdir_p(dumpfiledir)
-      tag_logger "mkdir_p end"
 
-      # b.同期データを出力
-      ENV['STATUS_FILE'] = STATUS_FILE
-      ENV['DUMP_FILE'] = dumpfile
-      Rake::Task["enju:sync:export"].invoke
+      tag_logger "export: start"
+      EnjuSyncServices::Sync.export(STATUS_FILE: status_file_name, DUMP_FILE: dumpfile)
 
-      # c.バケット作成, d.データ転送
-      EnjuSync.ftpsyncpush(last_id) 
+      tag_logger "push: start"
+      EnjuSyncServices::Sync.marshal_file_push(last_event_id)
     end
 
     desc 'Scheduled import process on opac(slave)'
@@ -101,7 +92,7 @@ namespace :enju_trunk do
       require File.join(Gem::Specification.find_by_name("enju_trunk_fire_sync").gem_dir, 'app/services/enju_sync_service.rb')
       Rails.logger = Logger.new(Rails.root.join("#{LOGFILE}-#{Rails.env}.log"))
 
-      $enju_log_head = "sync::scheduled_import"
+      $enju_log_head = ":scheduled_import"
       $enju_log_tag = Digest::SHA1.hexdigest(Time.now.strftime('%s'))[-5, 5]
 
       tag_logger "start"
