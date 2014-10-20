@@ -13,11 +13,13 @@ Gem::Specification.new do |s|
   s.summary     = "data synchronization program for enju trunk"
   s.description = "EnjuTrunkFireSync."
 
-  s.files = Dir["{app,config,db,lib}/**/*"] + ["MIT-LICENSE", "Rakefile", "README.rdoc"]
-  s.test_files = Dir["test/**/*"]
+  s.files = Dir["{app,config,db,lib}/**/*"] + ["MIT-LICENSE", "Rakefile", "README.md"]
+  s.test_files = Dir["spec/**/*"] - Dir["spec/dummy/log/*"] 
 
-  s.add_dependency "rails", "~> 3.2.15"
+  s.add_dependency 'rails', '~> 3.2.15'
   #s.add_dependency "enju_trunk"
+  s.add_dependency 'exception_notification-rake', '~> 0.0.6'
 
   s.add_development_dependency "sqlite3"
+  s.add_development_dependency 'rspec-rails'
 end
