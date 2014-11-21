@@ -17,8 +17,9 @@ Gem::Specification.new do |s|
   s.test_files = Dir["spec/**/*"] - Dir["spec/dummy/log/*"] 
 
   s.add_dependency 'rails', '~> 3.2.15'
+  s.add_dependency 'actionmailer'
+  s.add_dependency 'activesupport'
   #s.add_dependency "enju_trunk"
-  s.add_dependency 'exception_notification-rake', '~> 0.0.6'
 
   s.add_development_dependency "sqlite3"
   s.add_development_dependency 'rspec-rails'
