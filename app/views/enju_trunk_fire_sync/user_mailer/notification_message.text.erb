@@ -1,0 +1,13 @@
+<%= raw @message %>
+
+------------
+Backtrace
+------------
+<%= raw @backtrace.first %>
+
+------------
+Environment
+------------
+* Process: <%= raw $$ %>
+* Server : <%= raw `hostname`.chomp %>
+
